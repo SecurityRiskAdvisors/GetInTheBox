@@ -1,0 +1,4 @@
+mkdir /opt/redswarm/init/
+docker swarm init --default-addr-pool 172.16.0.0/20 --default-addr-pool-mask-length 24
+docker swarm join-token worker | sed -n '3p' | sed -e 's/^[ ]*//' > /opt/redswarm/init/worker_join_cmd
+docker swarm join-token manager | sed -n '3p' | sed -e 's/^[ ]*//' > /opt/redswarm/init/manager_join_cmd

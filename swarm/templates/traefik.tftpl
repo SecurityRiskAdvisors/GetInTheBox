@@ -1,0 +1,105 @@
+version: "3.9"
+
+volumes:
+  traefik-public-certificates:
+
+networks:
+  public:
+    name: public
+    driver: overlay
+  internal:
+    name: internal
+    driver: overlay
+
+services:
+  # init the volume mount that traefik depends on
+  dir_init:
+    image: alpine:latest
+    deploy:
+      restart_policy:
+        condition: on-failure
+        delay: 1s
+        max_attempts: 5
+        window: 5s
+    volumes:
+      - /opt/redswarm:/opt/redswarm
+    command: sh -c "mkdir -p /opt/redswarm/traefik/logs"
+    
+  traefik:
+    image: ${traefik_image_name}
+    cap_add: # cap required to bind to low ports
+      - CAP_NET_BIND_SERVICE
+    ports:
+      - "53:53/udp"
+      - 80:80
+      - 443:443
+      - 2222:2222
+      - 8443:8443
+      - 9433:9443
+      # for CS/NH teamserver UI interaction
+      - 50050:50050
+      - 50051:50051
+    deploy:
+      placement:
+        constraints:
+          # Run on the manager to access the Swarm API
+          - node.role==manager
+      labels:
+        # Enable Traefik for this service, to make it available in the public network
+        - traefik.enable=true
+        # Use the `public` network (declared in the `networks` block above)
+        - traefik.docker.network=public
+        - traefik.constraint-label=public
+        # generate password via `htpasswd -nB admin` -- double up all `$` to escape
+        - traefik.http.middlewares.traefik-auth.basicauth.users=admin:${replace(traefik_admin_password_hash, "$", "$$")}
+        - traefik.http.middlewares.https-redirect.redirectscheme.scheme=https
+        - traefik.http.middlewares.https-redirect.redirectscheme.permanent=true
+        - traefik.http.routers.traefik-public-https.rule=Host(`${traefik_ui_domain}`)
+        - traefik.http.routers.traefik-public-https.entrypoints=https
+        - traefik.http.routers.traefik-public-https.tls=true
+        - traefik.http.routers.traefik-public-https.service=api@internal
+        - traefik.http.routers.traefik-public-https.tls.certresolver=le
+        - traefik.http.routers.traefik-public-https.middlewares=traefik-auth
+        - traefik.http.services.traefik-public.loadbalancer.server.port=8080
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - traefik-public-certificates:/certificates
+      - /opt/redswarm/traefik/logs:/var/log/traefik
+    command:
+      - --providers.docker
+      # Add a constraint to only use services with the label "traefik.constraint-label=public"
+      - --providers.docker.constraints=Label(`traefik.constraint-label`, `public`)
+      # Do not expose all Docker services, only the ones explicitly exposed
+      - --providers.docker.exposedbydefault=false
+      - --providers.docker.swarmmode
+      # Since we use Cobalt Strike's & Portainer's self-signed certs, we need to turn off TLS
+      # verification. Unfortunately, we can't do this for a specific router.
+      - --serverstransport.insecureskipverify=true
+      - --entrypoints.dns.address=:53/udp
+      - --entrypoints.http.address=:80
+      - --entrypoints.https.address=:443
+      - --entrypoints.alt-ssh.address=:2222
+      - --entrypoints.https-alt0.address=:8443
+      - --entrypoints.https-alt1.address=:9443
+      - --entrypoints.operator-ingress-tcp.address=:50050
+      - --entrypoints.operator-ingress-http.address=:50051
+      - --certificatesresolvers.le.acme.email=admin@contoso.com
+      - --certificatesresolvers.le.acme.storage=/certificates/acme.json
+      - --certificatesresolvers.le.acme.tlschallenge=true
+      # comment this out to use the production LetsEncrypt servers. staging has
+      # much higher rate limits, so is ideal when testing deployments.
+      #- --certificatesresolvers.le.acme.caserver=https://acme-staging-v02.api.letsencrypt.org/directory
+      - --log
+      - --log.level=DEBUG
+      - --log.filePath=/var/log/traefik/traefik.log
+      - --accesslog=true
+      - --accesslog.filepath=/var/log/traefik/access.log
+      - --accesslog.format=json
+      - --accesslog.fields.defaultmode=keep
+      - --accesslog.fields.headers.defaultmode=keep
+      - --accesslog.fields.headers.names.Authorization=redact
+      - --metrics.prometheus=true
+      - --api
+    networks:
+      - public
+      - internal

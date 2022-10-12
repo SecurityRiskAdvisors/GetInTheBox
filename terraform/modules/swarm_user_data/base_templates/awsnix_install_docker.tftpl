@@ -1,0 +1,10 @@
+mkdir /opt/images
+mount /dev/sdf /opt/images
+echo '/dev/sdf /opt/images ext4 defaults,nofail 0 2' >> /etc/fstab
+chmod -R 777 /opt/images
+yum update -y
+amazon-linux-extras install docker -y
+echo '{ "dns": ["1.1.1.1", "169.254.169.253"], "data-root": "/opt/images" }' > /etc/docker/daemon.json
+service docker start
+systemctl enable docker
+usermod -a -G docker ec2-user

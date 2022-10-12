@@ -1,0 +1,5 @@
+until [[ -f /opt/redswarm/init/manager_join_cmd ]]
+do
+    sleep 1
+done
+bash /opt/redswarm/init/manager_join_cmd

@@ -1,0 +1,40 @@
+version: "3.9"
+
+services:
+  teamserver:
+    image: ${cs_image_name}
+    networks:
+      - public
+    environment:
+      - TZ=America/New_York
+      - COBALTSTRIKE_KEY=${cs_license}
+      - COBALTSTRIKE_PASS=${cs_pass}
+      - COBALTSTRIKE_EXP=${cs_expire_date}
+      - COBALTSTRIKE_PROFILE=${cs_profile}
+    volumes:
+      - "/opt/redswarm/cobaltstrike:/opt/cobaltstrike"
+    deploy:
+      placement:
+        constraints:
+          - node.role == worker
+      labels:
+        - traefik.enable=true
+        - traefik.docker.network=public
+        - traefik.constraint-label=public
+        # primary profile
+        - traefik.http.routers.cobaltstrike-profile0.rule=Host(`${join("`, `", cs_profile_domains)}`) && PathPrefix(`${join("`, `", cs_profile_paths)}`) && Headers(`User-Agent`, `${cs_profile_ua}`)
+        - traefik.http.routers.cobaltstrike-profile0.entrypoints=https
+        - traefik.http.routers.cobaltstrike-profile0.tls=true
+        - traefik.http.routers.cobaltstrike-profile0.tls.certresolver=le
+        - traefik.http.routers.cobaltstrike-profile0.service=cobaltstrike-https
+        - traefik.http.services.cobaltstrike-https.loadbalancer.server.port=443
+        - traefik.http.services.cobaltstrike-https.loadbalancer.server.scheme=https
+        # UI
+        - traefik.tcp.routers.cobaltstrike-teamserver.rule=HostSNI(`*`)
+        - traefik.tcp.routers.cobaltstrike-teamserver.entrypoints=operator-ingress-tcp
+        - traefik.tcp.routers.cobaltstrike-teamserver.service=cobaltstrike-teamserver
+        - traefik.tcp.services.cobaltstrike-teamserver.loadbalancer.server.port=50050
+
+networks:
+  public:
+    external: true

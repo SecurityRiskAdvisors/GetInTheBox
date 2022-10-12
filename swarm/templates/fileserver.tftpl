@@ -1,0 +1,83 @@
+version: "3.9"
+
+services:
+  dir_init:
+    image: alpine:latest
+    deploy:
+      restart_policy:
+        condition: on-failure
+        delay: 1s
+        max_attempts: 5
+        window: 5s
+    volumes:
+      - /opt/redswarm:/opt/redswarm
+    command: >
+      sh -c "mkdir -p /opt/redswarm/fileserver/static/ &&
+      mkdir -p /opt/redswarm/ssh &&
+      echo \"Red Swarm Payload Server\nUse the /opt/fileserver dir for housing files. CAUTION: Anything in static/ is served via nginx.\" > /opt/redswarm/ssh/motd &&
+      mkdir -p /opt/redswarm/nginx/logs/"
+
+  fileserver:
+    image: ${fileserver_nginx_image_name}
+    networks:
+      - public
+    volumes:
+      - /opt/redswarm/nginx/logs:/var/log/nginx/
+      - /opt/redswarm/fileserver/static:/static
+    environment:
+      DEFAULT_CONFIG: |
+        server {
+          listen 8080;
+          server_name docker_flask_gunicorn_nginx;
+
+          location ${fileserver_route_prefix} {
+              rewrite ^/static(.*) /$$1 break;
+              root /static;
+          }
+        }
+    command: >
+      sh -c "echo \"$$DEFAULT_CONFIG\" > /etc/nginx/conf.d/default.conf &&
+      nginx -g \"daemon off;\""
+    deploy:
+      labels:
+        - traefik.enable=true
+        - traefik.docker.network=public
+        - traefik.constraint-label=public
+        - traefik.http.routers.fileserver.rule=Host(`${fileserver_nginx_domain}`) && PathPrefix(`${fileserver_route_prefix}`)
+        - traefik.http.routers.fileserver.entrypoints=https
+        - traefik.http.routers.fileserver.tls=true
+        - traefik.http.routers.fileserver.tls.certresolver=le
+        - traefik.http.routers.fileserver.service=fileserver-https
+        #- traefik.http.routers.fileserver.middlewares=fileserver-auth
+        - traefik.http.services.fileserver-https.loadbalancer.server.port=8080
+        - traefik.http.services.fileserver-https.loadbalancer.server.scheme=http
+
+  scp:
+    image: ${fileserver_openssh_image_name}
+    networks:
+      - public
+    volumes:
+      - /opt/redswarm/fileserver:/opt/fileserver
+      - /opt/redswarm/ssh/motd:/etc/motd
+    environment:
+      TZ: America/New_York
+      # ssh-keygen -f key.pem -y
+      PUBLIC_KEY: ${fileserver_ssh_pub_key}
+      SUDO_ACCESS: "true"
+      PASSWORD_ACCESS: "false"
+      USER_NAME: ${fileserver_ssh_username}
+    deploy:
+      labels:
+        - traefik.enable=true
+        - traefik.docker.network=public
+        - traefik.constraint-label=public
+        - traefik.tcp.routers.fileserver-ssh.rule=HostSNI(`*`)
+        - traefik.tcp.routers.fileserver-ssh.entrypoints=alt-ssh
+        - traefik.tcp.routers.fileserver-ssh.service=fileserver-ssh-svc
+        - traefik.tcp.services.fileserver-ssh-svc.loadbalancer.server.port=2222
+
+networks:
+  public:
+    external: true
+  internal:
+    external: true
