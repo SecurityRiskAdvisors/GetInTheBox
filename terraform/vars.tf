@@ -21,7 +21,7 @@ variable "cloudflare_api_key" {
 
 variable "ingress_ip_cidrs" {
     type = list(string)
-    description = "List of SRA IPs -- used for secgroups tied to VPN instances."
+    description = "List of IPs -- used for secgroups tied to VPN instances."
 }
 
 variable "num_managers" {
